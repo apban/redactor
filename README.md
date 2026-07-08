@@ -1,101 +1,53 @@
 # Redactor
 
-A [Hammerspoon](https://www.hammerspoon.org/) Spoon for macOS that lets you draw black redaction boxes on screen, then take a clipboard screenshot with the boxes baked into the image. Boxes disappear automatically once the screenshot lands on the clipboard.
+Draw black redaction boxes on your screen, take a screenshot or recording with the boxes baked into the image, and the boxes disappear the moment the capture completes.
+
+A standalone, cross-platform rewrite of the Redactor Hammerspoon spoon (which lives on in this repo's [history](../../tree/cf99749)). No Hammerspoon, no configuration files, no Accessibility permission.
 
 ## Why
 
-You're about to screenshot something with an API key, customer name, or other sensitive content visible. Editing the screenshot after the fact is annoying. Redactor lets you cover the sensitive parts first, then drag your normal screenshot region over the area.
-
-## Requirements
-
-- macOS
-- [Hammerspoon](https://www.hammerspoon.org/) (free, MIT-licensed). Install with `brew install --cask hammerspoon`.
-- Accessibility permission for Hammerspoon (System Settings → Privacy & Security → Accessibility).
-
-## Install
-
-```bash
-git clone https://github.com/apban/redactor.git ~/redactor
-ln -s ~/redactor/Redactor.spoon ~/.hammerspoon/Spoons/Redactor.spoon
-```
-
-The symlink lets you `git pull` to update without reinstalling. If you'd rather just copy:
-
-```bash
-git clone https://github.com/apban/redactor.git
-cp -R redactor/Redactor.spoon ~/.hammerspoon/Spoons/
-```
-
-## Configure
-
-Add to your `~/.hammerspoon/init.lua`:
-
-```lua
-hs.loadSpoon("Redactor")
-
-spoon.Redactor:bindHotkeys({
-  toggle = { {"cmd", "alt"}, "b" },          -- enter/exit draw mode
-  panic  = { {"cmd", "alt", "shift"}, "b" }, -- clear all boxes
-})
-```
-
-Reload Hammerspoon (menu bar icon → Reload Config).
+You're about to screenshot something with an API key, customer name, or other sensitive content visible. Editing the screenshot after the fact is annoying. Redactor lets you cover the sensitive parts first, then take your normal screenshot over the area.
 
 ## Usage
 
-1. **⌘⌥B** to enter draw mode. The screen tints slightly so you know you're in.
-2. Click-drag to add black boxes over anything sensitive. Repeat for as many as you need.
-3. Press **Return** to commit (or ⌘⌥B again). Boxes stay on screen.
-4. Take your screenshot. macOS default is **⌘⌃⇧4** (drag region → clipboard). If you've remapped the screenshot shortcut to ⌘⇧S in System Settings, that also works (see [Screenshot hotkey passthrough](#screenshot-hotkey-passthrough)).
-5. The moment the image lands on your clipboard, the boxes disappear.
+1. Press **Cmd+Alt+B** (macOS) or **Ctrl+Alt+B** (Windows/Linux) to enter draw mode. The screen tints slightly.
+2. Click-drag black boxes over anything sensitive. Repeat as needed.
+3. Take your screenshot or screen recording with your OS capture tool, to clipboard or to file. Custom keybinds work too. No need to leave draw mode first: the tint and crosshair are excluded from captures, only the boxes are baked in.
+4. The moment the capture completes (image on the clipboard, or a new file in your screenshot/recording folder), the boxes disappear. If macOS shows the floating corner thumbnail, the capture completes when the thumbnail goes away.
+
+Optional: **Return** or the toggle hotkey exits draw mode early, keeping the boxes up (click-through) while you do something else before capturing.
 
 ### Escape hatches
 
-- **Esc** during draw mode: cancel and clear what you just drew.
-- **⌘⌥⇧B** any time: panic clear — kills all boxes and stops the watcher.
-- The clipboard watcher times out after 120 seconds if you walk away without screenshotting.
+- **Esc** during draw mode: cancel and clear everything.
+- **Cmd/Ctrl+Alt+Shift+B** any time: panic clear.
+- The tray icon menu has Toggle, Panic clear, and Quit.
+- If you never take a screenshot, boxes clear themselves after 120 seconds.
 
-## Screenshot hotkey passthrough
+## Install
 
-While in draw mode, an active event tap captures all mouse drags so they draw boxes instead of triggering whatever app is below. That means if you trigger your screenshot tool without exiting draw mode first, your screenshot drag will get eaten and turn into another box.
+Grab the build for your OS from [Releases](../../releases). The builds are unsigned:
 
-Redactor solves this by watching for a specific keystroke that should exit draw mode AND pass through to your screenshot tool. Default: **⌘⇧S** (matches users who've remapped the macOS screenshot shortcut to ⌘⇧S).
+- **macOS**: right-click the app, choose Open, confirm. Only needed the first time.
+- **Windows**: if SmartScreen appears, click More info, then Run anyway.
+- **Linux**: `chmod +x` the AppImage and run it. X11 works; Wayland is best effort (global hotkeys depend on your compositor; use the tray menu if they don't fire).
 
-To customize for a different screenshot key, set the properties before `bindHotkeys`:
+No permissions are required on macOS. Redactor does not use Accessibility or Screen Recording APIs; the screenshot is taken by the OS tool you already use.
 
-```lua
-spoon.Redactor.screenshotPassthroughKey  = "4"
-spoon.Redactor.screenshotPassthroughMods = { cmd = true, ctrl = true, shift = true }
-spoon.Redactor:bindHotkeys({ ... })
+## Build from source
+
+Requires [Rust](https://rustup.rs/) and Node 20+.
+
+```bash
+npm install
+npm run tauri build
 ```
 
-To disable passthrough entirely (and always require an explicit Return before screenshotting), set the key to `nil`.
+Dev mode: `npm run tauri dev`.
 
-## Configuration reference
+## How it works
 
-All properties are set on `spoon.Redactor` before calling `bindHotkeys`.
-
-| Property | Default | What it does |
-|---|---|---|
-| `boxLevel` | `hs.canvas.windowLevels.screenSaver` | Window level for committed boxes. If your screenshot tool dims them during capture, bump to `assistiveTechHigh`. |
-| `overlayLevel` | `hs.canvas.windowLevels.overlay` | Window level for the draw-mode tint. |
-| `watchTimeout` | `120` | Seconds the clipboard watcher waits before giving up. |
-| `screenshotPassthroughKey` | `"s"` | Key (string name) that exits draw mode and passes through. `nil` disables. |
-| `screenshotPassthroughMods` | `{cmd=true, shift=true}` | Modifier flags required for the passthrough key. |
-
-## Troubleshooting
-
-**My screenshot captures a dimmed version of the boxes instead of solid black.**
-Your screenshot tool is drawing above the boxes. Bump the window level:
-```lua
-spoon.Redactor.boxLevel = hs.canvas.windowLevels.assistiveTechHigh
-```
-
-**Nothing happens when I press the hotkey.**
-Check that Hammerspoon has Accessibility permission. Then reload config and check the Hammerspoon console for errors (menu bar icon → Console).
-
-**The boxes won't go away.**
-Press ⌘⌥⇧B (panic clear). If that fails, reload Hammerspoon config.
+Two transparent, always-on-top windows per monitor. The boxes layer is click-through and holds the black rectangles; the OS screenshot tool composites it into the capture, so the boxes are baked into the pixels, not metadata. The draw layer (tint, crosshair, drag preview) sits above it and is excluded from screen captures (`NSWindowSharingNone` on macOS, `WDA_EXCLUDEFROMCAPTURE` on Windows; Linux has no exclusion API, so the tint is skipped there). A background thread watches for a completed capture: a new image on the clipboard, or a new image/video file in the OS capture folders (on macOS it reads your configured `com.apple.screencapture` locations). Either signal clears everything.
 
 ## License
 
