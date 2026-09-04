@@ -82,7 +82,9 @@ fn fingerprint(clipboard: &mut Clipboard) -> Option<u64> {
     let step = (bytes.len() / 64).max(1);
     let mut i = 0;
     while i < bytes.len() {
-        hash = hash.wrapping_mul(1_099_511_628_211).wrapping_add(bytes[i] as u64);
+        hash = hash
+            .wrapping_mul(1_099_511_628_211)
+            .wrapping_add(bytes[i] as u64);
         i += step;
     }
     Some(hash)

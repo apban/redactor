@@ -9,6 +9,8 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+#[cfg(desktop)]
+use tauri_plugin_updater::UpdaterExt;
 
 const WATCH_TIMEOUT: Duration = Duration::from_secs(120);
 const DEFAULT_TOGGLE_SHORTCUT: &str = "CmdOrCtrl+Alt+B";
@@ -61,8 +63,7 @@ fn save_toggle_shortcut(app: &AppHandle, shortcut: &str) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let body = serde_json::json!({ "toggle": shortcut });
-    std::fs::write(&path, serde_json::to_string_pretty(&body).unwrap())
-        .map_err(|e| e.to_string())
+    std::fs::write(&path, serde_json::to_string_pretty(&body).unwrap()).map_err(|e| e.to_string())
 }
 
 fn windows_with_prefix(app: &AppHandle, prefix: &str) -> Vec<WebviewWindow> {
@@ -247,7 +248,11 @@ fn add_box_internal(app: &AppHandle, index: &str, x: f64, y: f64, w: f64, h: f64
 
 #[tauri::command]
 fn add_box(window: WebviewWindow, app: AppHandle, x: f64, y: f64, w: f64, h: f64) {
-    let index = window.label().strip_prefix("draw-").unwrap_or("0").to_string();
+    let index = window
+        .label()
+        .strip_prefix("draw-")
+        .unwrap_or("0")
+        .to_string();
     add_box_internal(&app, &index, x, y, w, h);
 }
 
@@ -264,7 +269,12 @@ fn overlay_cancel(app: AppHandle) {
 /// Register the toggle shortcut currently held in state. Unregisters first so
 /// this is idempotent (double-register is an error otherwise).
 fn register_toggle(app: &AppHandle) {
-    let cur = app.state::<SharedState>().lock().unwrap().toggle_shortcut.clone();
+    let cur = app
+        .state::<SharedState>()
+        .lock()
+        .unwrap()
+        .toggle_shortcut
+        .clone();
     match cur.parse::<Shortcut>() {
         Ok(sc) => {
             let gs = app.global_shortcut();
@@ -279,7 +289,11 @@ fn register_toggle(app: &AppHandle) {
 
 #[tauri::command]
 fn get_toggle_shortcut(app: AppHandle) -> String {
-    app.state::<SharedState>().lock().unwrap().toggle_shortcut.clone()
+    app.state::<SharedState>()
+        .lock()
+        .unwrap()
+        .toggle_shortcut
+        .clone()
 }
 
 /// Suspend the global shortcut while the settings window captures keys, so the
@@ -287,7 +301,12 @@ fn get_toggle_shortcut(app: AppHandle) -> String {
 /// the string, so resume/close re-registers it.
 #[tauri::command]
 fn pause_shortcut(app: AppHandle) {
-    let cur = app.state::<SharedState>().lock().unwrap().toggle_shortcut.clone();
+    let cur = app
+        .state::<SharedState>()
+        .lock()
+        .unwrap()
+        .toggle_shortcut
+        .clone();
     if let Ok(sc) = cur.parse::<Shortcut>() {
         let _ = app.global_shortcut().unregister(sc);
     }
@@ -306,7 +325,12 @@ fn set_toggle_shortcut(app: AppHandle, shortcut: String) -> Result<(), String> {
         .parse()
         .map_err(|_| format!("invalid shortcut: {shortcut}"))?;
     let gs = app.global_shortcut();
-    let old = app.state::<SharedState>().lock().unwrap().toggle_shortcut.clone();
+    let old = app
+        .state::<SharedState>()
+        .lock()
+        .unwrap()
+        .toggle_shortcut
+        .clone();
     if let Ok(old_sc) = old.parse::<Shortcut>() {
         let _ = gs.unregister(old_sc);
     }
@@ -375,8 +399,7 @@ fn spawn_debug_trigger(app: AppHandle) {
                 Some("exit") => exit_draw_mode(&handle),
                 Some("panic") => clear_all(&handle),
                 Some("simbox") => {
-                    let nums: Vec<f64> =
-                        parts.filter_map(|p| p.parse().ok()).collect();
+                    let nums: Vec<f64> = parts.filter_map(|p| p.parse().ok()).collect();
                     if let [x, y, w, h] = nums[..] {
                         add_box_internal(&handle, "0", x, y, w, h);
                     }
@@ -391,6 +414,7 @@ fn spawn_debug_trigger(app: AppHandle) {
 pub fn run() {
     let app = tauri::Builder::default()
         .manage(SharedState::default())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 // Only the toggle shortcut is ever registered, so any pressed
@@ -421,10 +445,8 @@ pub fn run() {
             app.state::<SharedState>().lock().unwrap().toggle_shortcut = toggle_shortcut;
             register_toggle(handle);
 
-            let toggle_item =
-                MenuItemBuilder::with_id("toggle", "Toggle draw mode").build(app)?;
-            let settings_item =
-                MenuItemBuilder::with_id("settings", "Settings…").build(app)?;
+            let toggle_item = MenuItemBuilder::with_id("toggle", "Toggle draw mode").build(app)?;
+            let settings_item = MenuItemBuilder::with_id("settings", "Settings…").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit Redactor").build(app)?;
             let menu = MenuBuilder::new(app)
                 .items(&[&toggle_item, &settings_item, &quit_item])
@@ -443,6 +465,33 @@ pub fn run() {
 
             #[cfg(debug_assertions)]
             spawn_debug_trigger(app.handle().clone());
+
+            // Check for updates in the background. A found update downloads and
+            // installs silently and applies on the next launch; failures (no
+            // network, no release yet) are logged and ignored.
+            #[cfg(desktop)]
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    match handle.updater() {
+                        Ok(updater) => match updater.check().await {
+                            Ok(Some(update)) => {
+                                log(&format!("update available: {}", update.version));
+                                if let Err(e) =
+                                    update.download_and_install(|_, _| {}, || {}).await
+                                {
+                                    log(&format!("update install failed: {e}"));
+                                } else {
+                                    log("update installed; applies on next launch");
+                                }
+                            }
+                            Ok(None) => log("no update available"),
+                            Err(e) => log(&format!("update check failed: {e}")),
+                        },
+                        Err(e) => log(&format!("updater unavailable: {e}")),
+                    }
+                });
+            }
 
             Ok(())
         })
