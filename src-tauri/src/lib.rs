@@ -1,5 +1,6 @@
 mod watcher;
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -7,11 +8,10 @@ use std::time::{Duration, Instant};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
-use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 const WATCH_TIMEOUT: Duration = Duration::from_secs(120);
-const TOGGLE_SHORTCUT: &str = "CmdOrCtrl+Alt+B";
-const PANIC_SHORTCUT: &str = "CmdOrCtrl+Alt+Shift+B";
+const DEFAULT_TOGGLE_SHORTCUT: &str = "CmdOrCtrl+Alt+B";
 
 /// Timestamped stderr log for diagnosing state transitions.
 pub(crate) fn log(msg: &str) {
@@ -34,9 +34,36 @@ struct RedactorState {
     box_count: u32,
     watcher_stop: Option<Arc<AtomicBool>>,
     watcher_deadline: Option<Arc<Mutex<Instant>>>,
+    /// The currently registered toggle shortcut, as a Tauri accelerator string.
+    toggle_shortcut: String,
 }
 
 type SharedState = Mutex<RedactorState>;
+
+fn config_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join("config.json"))
+}
+
+fn load_toggle_shortcut(app: &AppHandle) -> String {
+    config_path(app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("toggle").and_then(|t| t.as_str().map(String::from)))
+        .unwrap_or_else(|| DEFAULT_TOGGLE_SHORTCUT.to_string())
+}
+
+fn save_toggle_shortcut(app: &AppHandle, shortcut: &str) -> Result<(), String> {
+    let path = config_path(app).ok_or("no config dir")?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let body = serde_json::json!({ "toggle": shortcut });
+    std::fs::write(&path, serde_json::to_string_pretty(&body).unwrap())
+        .map_err(|e| e.to_string())
+}
 
 fn windows_with_prefix(app: &AppHandle, prefix: &str) -> Vec<WebviewWindow> {
     app.webview_windows()
@@ -234,6 +261,94 @@ fn overlay_cancel(app: AppHandle) {
     clear_all(&app);
 }
 
+/// Register the toggle shortcut currently held in state. Unregisters first so
+/// this is idempotent (double-register is an error otherwise).
+fn register_toggle(app: &AppHandle) {
+    let cur = app.state::<SharedState>().lock().unwrap().toggle_shortcut.clone();
+    match cur.parse::<Shortcut>() {
+        Ok(sc) => {
+            let gs = app.global_shortcut();
+            let _ = gs.unregister(sc.clone());
+            if let Err(e) = gs.register(sc) {
+                log(&format!("failed to register toggle shortcut: {e}"));
+            }
+        }
+        Err(_) => log(&format!("invalid stored shortcut: {cur}")),
+    }
+}
+
+#[tauri::command]
+fn get_toggle_shortcut(app: AppHandle) -> String {
+    app.state::<SharedState>().lock().unwrap().toggle_shortcut.clone()
+}
+
+/// Suspend the global shortcut while the settings window captures keys, so the
+/// combo reaches the focused webview instead of toggling redactor. State keeps
+/// the string, so resume/close re-registers it.
+#[tauri::command]
+fn pause_shortcut(app: AppHandle) {
+    let cur = app.state::<SharedState>().lock().unwrap().toggle_shortcut.clone();
+    if let Ok(sc) = cur.parse::<Shortcut>() {
+        let _ = app.global_shortcut().unregister(sc);
+    }
+}
+
+#[tauri::command]
+fn resume_shortcut(app: AppHandle) {
+    register_toggle(&app);
+}
+
+/// Validate, re-register, and persist a new toggle shortcut. Returns an error
+/// string the settings window shows inline; on error the old shortcut stays.
+#[tauri::command]
+fn set_toggle_shortcut(app: AppHandle, shortcut: String) -> Result<(), String> {
+    let new: Shortcut = shortcut
+        .parse()
+        .map_err(|_| format!("invalid shortcut: {shortcut}"))?;
+    let gs = app.global_shortcut();
+    let old = app.state::<SharedState>().lock().unwrap().toggle_shortcut.clone();
+    if let Ok(old_sc) = old.parse::<Shortcut>() {
+        let _ = gs.unregister(old_sc);
+    }
+    gs.register(new).map_err(|e| e.to_string())?;
+    save_toggle_shortcut(&app, &shortcut)?;
+    app.state::<SharedState>().lock().unwrap().toggle_shortcut = shortcut;
+    log("toggle shortcut updated");
+    Ok(())
+}
+
+/// Open (or focus) the settings window. On macOS the app runs as an Accessory,
+/// so bump the activation policy to Regular while settings is open, otherwise
+/// the window cannot take keyboard focus to capture a shortcut.
+fn open_settings(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.set_focus();
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+
+    let built = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
+        .title("Redactor Settings")
+        .inner_size(360.0, 220.0)
+        .resizable(false)
+        .build();
+    match built {
+        Ok(w) => {
+            let handle = app.clone();
+            w.on_window_event(move |event| {
+                if let tauri::WindowEvent::Destroyed = event {
+                    // Re-register in case the window closed mid-capture (paused).
+                    register_toggle(&handle);
+                    #[cfg(target_os = "macos")]
+                    let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                }
+            });
+        }
+        Err(e) => log(&format!("failed to open settings: {e}")),
+    }
+}
+
 /// Debug-build remote control: poll a trigger file for commands so tests can
 /// drive the app without synthetic input events. Enabled only when the
 /// REDACTOR_DEBUG_TRIGGER env var points at a file.
@@ -274,23 +389,16 @@ fn spawn_debug_trigger(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let toggle_shortcut: Shortcut = TOGGLE_SHORTCUT.parse().unwrap();
-    let panic_shortcut: Shortcut = PANIC_SHORTCUT.parse().unwrap();
-
     let app = tauri::Builder::default()
         .manage(SharedState::default())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcuts([TOGGLE_SHORTCUT, PANIC_SHORTCUT])
-                .expect("invalid shortcut definition")
-                .with_handler(move |app, shortcut, event| {
-                    if event.state() != ShortcutState::Pressed {
-                        return;
-                    }
-                    if shortcut == &toggle_shortcut {
+                // Only the toggle shortcut is ever registered, so any pressed
+                // event is the toggle. Shortcuts are registered in setup once
+                // the persisted value is loaded, and re-registered on change.
+                .with_handler(move |app, _shortcut, event| {
+                    if event.state() == ShortcutState::Pressed {
                         toggle(app);
-                    } else if shortcut == &panic_shortcut {
-                        clear_all(app);
                     }
                 })
                 .build(),
@@ -298,19 +406,28 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             add_box,
             overlay_exit,
-            overlay_cancel
+            overlay_cancel,
+            get_toggle_shortcut,
+            set_toggle_shortcut,
+            pause_shortcut,
+            resume_shortcut
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
+            let handle = app.handle();
+            let toggle_shortcut = load_toggle_shortcut(handle);
+            app.state::<SharedState>().lock().unwrap().toggle_shortcut = toggle_shortcut;
+            register_toggle(handle);
+
             let toggle_item =
                 MenuItemBuilder::with_id("toggle", "Toggle draw mode").build(app)?;
-            let panic_item =
-                MenuItemBuilder::with_id("panic", "Panic clear").build(app)?;
+            let settings_item =
+                MenuItemBuilder::with_id("settings", "Settings…").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit Redactor").build(app)?;
             let menu = MenuBuilder::new(app)
-                .items(&[&toggle_item, &panic_item, &quit_item])
+                .items(&[&toggle_item, &settings_item, &quit_item])
                 .build()?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
@@ -318,7 +435,7 @@ pub fn run() {
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "toggle" => toggle(app),
-                    "panic" => clear_all(app),
+                    "settings" => open_settings(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
