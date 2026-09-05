@@ -31,9 +31,16 @@ function mainKey(code: string): string | null {
   return map[code] ?? null;
 }
 
-// Render a Tauri accelerator string as macOS glyphs, e.g. "CmdOrCtrl+Alt+B"
-// becomes "⌥⌘B". Modifiers sort into the mac order ⌃⌥⇧⌘ before the key.
-function toSymbols(accel: string): string {
+const isMac = navigator.userAgent.includes("Mac");
+
+// Render a Tauri accelerator ("CmdOrCtrl+Alt+B") for display, matching the
+// running platform. macOS uses glyphs ("⌥⌘B"); Windows/Linux use words
+// ("Ctrl+Alt+B"), where CmdOrCtrl resolves to Ctrl.
+function formatAccel(accel: string): string {
+  return isMac ? macSymbols(accel) : winText(accel);
+}
+
+function macSymbols(accel: string): string {
   const glyph: Record<string, string> = {
     Control: "⌃",
     Ctrl: "⌃",
@@ -54,6 +61,29 @@ function toSymbols(accel: string): string {
   }
   const uniq = [...new Set(mods)].sort((a, b) => rank[a] - rank[b]);
   return uniq.join("") + key;
+}
+
+function winText(accel: string): string {
+  const name: Record<string, string> = {
+    CmdOrCtrl: "Ctrl",
+    Cmd: "Ctrl",
+    Command: "Ctrl",
+    Ctrl: "Ctrl",
+    Control: "Ctrl",
+    Alt: "Alt",
+    Option: "Alt",
+    Shift: "Shift",
+    Super: "Win",
+  };
+  const rank: Record<string, number> = { Ctrl: 0, Alt: 1, Shift: 2, Win: 3 };
+  const mods: string[] = [];
+  let key = "";
+  for (const part of accel.split("+")) {
+    if (name[part]) mods.push(name[part]);
+    else key = part;
+  }
+  const uniq = [...new Set(mods)].sort((a, b) => (rank[a] ?? 9) - (rank[b] ?? 9));
+  return [...uniq, key].join("+");
 }
 
 // Build a Tauri accelerator string from a KeyboardEvent, or null if the combo
@@ -90,7 +120,7 @@ document.addEventListener("keydown", (e) => {
   e.preventDefault();
   if (e.key === "Escape") {
     stopCapture();
-    captureBtn.textContent = toSymbols(pending ?? current);
+    captureBtn.textContent = formatAccel(pending ?? current);
     // Nothing saved, so restore the live shortcut.
     void invoke("resume_shortcut");
     return;
@@ -98,7 +128,7 @@ document.addEventListener("keydown", (e) => {
   const combo = accelerator(e);
   if (!combo) return; // wait for a non-modifier key with a modifier held
   pending = combo;
-  captureBtn.textContent = toSymbols(combo);
+  captureBtn.textContent = formatAccel(combo);
   saveBtn.disabled = combo === current;
   statusEl.textContent = "";
   stopCapture();
@@ -121,5 +151,5 @@ saveBtn.addEventListener("click", async () => {
 
 (async () => {
   current = await invoke<string>("get_toggle_shortcut");
-  captureBtn.textContent = current ? toSymbols(current) : "…";
+  captureBtn.textContent = current ? formatAccel(current) : "…";
 })();
