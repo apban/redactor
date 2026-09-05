@@ -1,11 +1,42 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#1FA2A6"/>
-  <rect x="116" y="96"  width="280" height="48" fill="#111111"/>
-  <rect x="116" y="164" width="88"  height="48" fill="#111111"/>
-  <rect x="308" y="164" width="88"  height="48" fill="#111111"/>
-  <rect x="116" y="232" width="280" height="48" fill="#111111"/>
-  <rect x="116" y="300" width="116" height="48" fill="#111111"/>
-  <rect x="252" y="300" width="116" height="48" fill="#111111"/>
-  <rect x="116" y="368" width="116" height="48" fill="#111111"/>
-  <rect x="280" y="368" width="116" height="48" fill="#111111"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#27b6ba"/>
+      <stop offset="1" stop-color="#148589"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#464d58"/>
+      <stop offset="0.5" stop-color="#20242b"/>
+      <stop offset="1" stop-color="#0a0c0f"/>
+    </linearGradient>
+    <filter id="raise" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="6" stdDeviation="7" flood-color="#053032" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- raised bars: gradient fill + shared drop shadow -->
+  <g filter="url(#raise)" fill="url(#bar)">
+    <rect x="116" y="96"  width="280" height="48" rx="12"/>
+    <rect x="116" y="164" width="88"  height="48" rx="12"/>
+    <rect x="308" y="164" width="88"  height="48" rx="12"/>
+    <rect x="116" y="232" width="280" height="48" rx="12"/>
+    <rect x="116" y="300" width="116" height="48" rx="12"/>
+    <rect x="252" y="300" width="116" height="48" rx="12"/>
+    <rect x="116" y="368" width="116" height="48" rx="12"/>
+    <rect x="280" y="368" width="116" height="48" rx="12"/>
+  </g>
+
+  <!-- top highlights for the 3D edge -->
+  <g fill="#ffffff" opacity="0.16">
+    <rect x="122" y="101" width="268" height="9" rx="4"/>
+    <rect x="122" y="169" width="76"  height="9" rx="4"/>
+    <rect x="314" y="169" width="76"  height="9" rx="4"/>
+    <rect x="122" y="237" width="268" height="9" rx="4"/>
+    <rect x="122" y="305" width="104" height="9" rx="4"/>
+    <rect x="258" y="305" width="104" height="9" rx="4"/>
+    <rect x="122" y="373" width="104" height="9" rx="4"/>
+    <rect x="286" y="373" width="104" height="9" rx="4"/>
+  </g>
 </svg>
