@@ -1,6 +1,6 @@
 [package]
 name = "redactor"
-version = "0.1.1"
+version = "0.1.2"
 description = "Draw black redaction boxes on screen, screenshot, boxes vanish."
 authors = ["Adam Bankhead"]
 license = "MIT"
