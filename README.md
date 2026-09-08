@@ -19,7 +19,6 @@ Optional: **Return** or the toggle hotkey exits draw mode early, keeping the box
 
 - **Esc** during draw mode: cancel and clear everything.
 - **Cmd/Ctrl+Alt+Shift+B** any time: panic clear.
-- The tray icon menu has Toggle, Panic clear, and Quit.
 - If you never take a screenshot, boxes clear themselves after 120 seconds.
 
 ## Install
