@@ -2,8 +2,6 @@
 
 Draw black redaction boxes on your screen, take a screenshot or recording with the boxes baked into the image, and the boxes disappear the moment the capture completes.
 
-A standalone, cross-platform rewrite of the Redactor Hammerspoon spoon (which lives on in this repo's [history](../../tree/cf99749)). No Hammerspoon, no configuration files, no Accessibility permission.
-
 ## Why
 
 You're about to screenshot something with an API key, customer name, or other sensitive content visible. Editing the screenshot after the fact is annoying. Redactor lets you cover the sensitive parts first, then take your normal screenshot over the area.
